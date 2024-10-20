@@ -1,7 +1,7 @@
 import json
 import os
 from dataclasses import dataclass, field
-from typing import Dict
+from typing import Dict, Union, List
 
 from .exceptions import (
     InsufficientMetaboliteError,
@@ -290,23 +290,38 @@ class Organelle(metaclass=OrganelleMeta):
         for metabolite, amount in metabolites.items():
             self.change_metabolite_quantity(metabolite, amount)
 
-    def get_metabolite_quantity(self, metabolite: str) -> float:
+    def get_metabolite_quantity(self, metabolite: Union[str, List[str]]) -> Union[float, List[float]]:
         """
-        Returns the quantity of a metabolite in the organelle.
+        Returns the quantity of one or more metabolites in the organelle.
 
         Parameters
         ----------
-        metabolite : str
-            The name of the metabolite.
+        metabolite : str or List[str]
+            The name of the metabolite or a list of metabolite names.
 
         Returns
         -------
-        float
-            The quantity of the metabolite.
+        float or List[float]
+            The quantity of the metabolite(s).
+
+        Raises
+        ------
+        UnknownMetaboliteError
+            If any of the requested metabolites are not found in the organelle.
         """
-        if metabolite not in self.metabolites:
-            raise UnknownMetaboliteError(f"Unknown metabolite: {metabolite}")
-        return self.metabolites[metabolite].quantity
+        if isinstance(metabolite, str):
+            if metabolite not in self.metabolites:
+                raise UnknownMetaboliteError(f"Unknown metabolite: {metabolite}")
+            return self.metabolites[metabolite].quantity
+        elif isinstance(metabolite, list):
+            quantities = []
+            for met in metabolite:
+                if met not in self.metabolites:
+                    raise UnknownMetaboliteError(f"Unknown metabolite: {met}")
+                quantities.append(self.metabolites[met].quantity)
+            return quantities
+        else:
+            raise TypeError("Metabolite must be a string or a list of strings")
 
     def set_metabolite_quantity(self, metabolite: str, quantity: float) -> None:
         """

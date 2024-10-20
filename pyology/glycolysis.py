@@ -3,17 +3,20 @@ import math
 from typing import TYPE_CHECKING
 
 from .common_reactions import GlycolysisReactions
+from .constants import SIMULATION_DURATION
 from .energy_calculations import (
     calculate_glycolysis_energy_state,
     calculate_total_adenine_nucleotides,
 )
 from .exceptions import GlycolysisError, ReactionError
 from .pathway import Pathway
+from .reporter import Reporter
 
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from .organelle import Organelle
+    from .cell import Cell
 
 
 class Glycolysis(Pathway):
@@ -184,7 +187,7 @@ class Glycolysis(Pathway):
 
         for i in range(glucose_units):
             logger.info(
-                f"🔄🔄🔄 Processing glucose unit {i+1} of {glucose_units} 🔄🔄🔄"
+                f"🔄🔄�� Processing glucose unit {i+1} of {glucose_units} 🔄🔄🔄"
             )
             try:
                 # Steps 1-4 occur once per glucose molecule
@@ -288,3 +291,38 @@ class Glycolysis(Pathway):
     @staticmethod
     def _calculate_total_adenine_nucleotides(organelle: "Organelle") -> float:
         return calculate_total_adenine_nucleotides(organelle.metabolites)
+
+
+class GlycolysisSimulation:
+    def __init__(self, cell: "Cell", reporter: "Reporter"):
+        self.cell = cell
+        self.reporter = reporter
+        self.simulation_duration = SIMULATION_DURATION
+
+    def run(self, glucose_amount: float) -> dict:
+        initial_atp, initial_adp, initial_amp = self.cell.get_metabolite_quantity(
+            ["ATP", "ADP", "AMP"]
+        )
+        initial_adenine_nucleotides = initial_atp + initial_adp + initial_amp
+
+        initial_glucose, initial_pyruvate = self.cell.get_metabolite_quantity(
+            ["glucose", "pyruvate"]
+        )
+
+        self.cell.set_metabolite_quantity("glucose", round(glucose_amount, 2))
+        self.reporter.log_event(
+            f"Starting simulation with {glucose_amount:.2f} glucose units"
+        )
+        self.reporter.log_event(
+            f"Initial ATP: {initial_atp}, Initial ADP: {initial_adp}, Initial AMP: {initial_amp}"
+        )
+        if initial_glucose < 1:
+            self.reporter.log_warning(
+                "Insufficient glucose for glycolysis. Stopping simulation."
+            )
+            return
+
+        # Perform glycolysis
+        net_atp_produced, pyruvate_produced = Glycolysis.perform(
+            self.cell, glucose_amount
+        )
