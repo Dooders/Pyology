@@ -1,10 +1,8 @@
-import logging
-
 from pyology.cell import Cell
 from pyology.glycolysis import Glycolysis
 from pyology.observers import (
-    NegativeMetaboliteObserver,
     AdenineNucleotideBalanceObserver,
+    NegativeMetaboliteObserver,
 )
 
 from .constants import SIMULATION_DURATION
@@ -18,83 +16,7 @@ from .exceptions import (
     QuantityError,
     UnknownMetaboliteError,
 )
-
-
-class Reporter:
-    """
-    A class to report events and log messages during the simulation.
-
-    Methods
-    -------
-    log_event(message: str) -> None:
-        Log an event message.
-    log_warning(message: str) -> None:
-        Log a warning message.
-    log_error(message: str) -> None:
-        Log an error message.
-    log_atp_production(step: str, atp_produced: float) -> None:
-        Log the ATP production for a specific step.
-    report_simulation_results(results: dict) -> None:
-        Report the simulation results.
-    """
-
-    def __init__(self):
-        self.logger = logging.getLogger(__name__)
-        self.atp_production_log = []
-
-    def log_event(self, message: str) -> None:
-        """
-        Log an event message.
-        """
-        self.logger.info(message)
-
-    def log_warning(self, message: str) -> None:
-        """
-        Log a warning message.
-        """
-        self.logger.warning(message)
-
-    def log_error(self, message: str) -> None:
-        """
-        Log an error message.
-        """
-        self.logger.error(message)
-
-    def log_atp_production(self, step: str, atp_produced: float) -> None:
-        """
-        Log the ATP production for a specific step.
-        """
-        self.atp_production_log.append((step, atp_produced))
-        self.log_event(f"ATP produced in {step}: {atp_produced}")
-
-    def report_simulation_results(self, results: dict) -> None:
-        """
-        Report the simulation results.
-        """
-        self.log_event(
-            f"Simulation completed in {results['simulation_time']:.2f} seconds"
-        )
-        self.log_event(f"Total ATP produced: {results['total_atp_produced']:.2f}")
-        self.log_event(f"Glucose processed: {results['glucose_processed']:.2f}")
-        self.log_event(f"Glucose consumed: {results['glucose_consumed']:.2f}")
-        self.log_event(f"Pyruvate produced: {results['pyruvate_produced']:.2f}")
-        self.log_event(f"Oxygen remaining: {results['oxygen_remaining']:.2f}")
-        self.log_event(f"Final cytoplasm ATP: {results['final_cytoplasm_atp']:.2f}")
-        self.log_event(
-            f"Final mitochondrion ATP: {results['final_mitochondrion_atp']:.2f}"
-        )
-        self.log_event(
-            f"2-Phosphoglycerate remaining: {results['final_phosphoglycerate_2']:.2f}"
-        )
-        self.log_event(
-            f"Phosphoenolpyruvate produced: {results['final_phosphoenolpyruvate']:.2f}"
-        )
-
-        self.log_event("\nATP Production Breakdown:")
-        for step, atp in self.atp_production_log:
-            self.log_event(f"  {step}: {atp:.2f}")
-
-        self.atp_production_log.clear()  # Clear the log for the next simulation
+from .reporter import Reporter
 
 
 class SimulationController:
@@ -114,9 +36,10 @@ class SimulationController:
         Run the simulation with the specified glucose amount.
     """
 
-    def __init__(self, cell: Cell, reporter: Reporter):
+    def __init__(self, cell: Cell, reporter: Reporter, debug=True):
         self.cell = cell
         self.reporter = reporter
+        self.debug = debug
         self.simulation_duration = SIMULATION_DURATION
         self.simulation_time = 0
         self.time_step = 0.001  # Decreased time step
@@ -172,7 +95,7 @@ class SimulationController:
                 f"Adjusted ADP by {adjustment:.6f} to maintain adenine nucleotide balance after glycolysis"
             )
 
-    def run_simulation(self, glucose: float) -> dict:
+    def run_simulation(self, glucose: float, reporter: Reporter) -> dict:
         """
         Run the simulation with the specified glucose amount.
 
@@ -186,6 +109,7 @@ class SimulationController:
         dict:
             The results of the simulation.
         """
+        self.glycolysis = Glycolysis(debug=self.debug)
         self.initial_adenine_nucleotides = (
             self.initial_atp + self.initial_adp + self.initial_amp
         )
@@ -193,7 +117,7 @@ class SimulationController:
             ("Initial", self.initial_adenine_nucleotides)
         )
         self.cell.metabolites["glucose"].quantity = round(glucose, 2)
-        self.reporter.log_event(f"Starting simulation with {glucose:.2f} glucose units")
+        reporter.log_event(f"Starting simulation with {glucose:.2f} glucose units")
         try:
             glucose_processed = 0
             total_atp_produced = 0
@@ -202,7 +126,7 @@ class SimulationController:
             initial_total_adenine = (
                 self.initial_atp + self.initial_adp + self.initial_amp
             )
-            self.reporter.log_event(
+            reporter.log_event(
                 f"Initial ATP: {self.initial_atp}, Initial ADP: {self.initial_adp}, Initial AMP: {self.initial_amp}"
             )
 
@@ -213,9 +137,9 @@ class SimulationController:
             ):
                 try:
                     glucose_available = self.cell.metabolites["glucose"].quantity
-                    self.reporter.log_event(f"glucose_available: {glucose_available}")
+                    reporter.log_event(f"glucose_available: {glucose_available}")
                     if glucose_available < 1:
-                        self.reporter.log_warning(
+                        reporter.log_warning(
                             "Insufficient glucose for glycolysis. Stopping simulation."
                         )
                         break
@@ -235,7 +159,7 @@ class SimulationController:
 
                     # Perform glycolysis
                     net_atp_produced, pyruvate_produced = Glycolysis.perform(
-                        self.cell.cytoplasm, glucose_available
+                        self.cell, glucose_available, self.reporter
                     )
 
                     # Add this line to track adenine nucleotides after glycolysis
@@ -254,20 +178,18 @@ class SimulationController:
                     # Update ATP levels
                     self.cell.cytoplasm.metabolites["ATP"].quantity += net_atp_produced
 
-                    self.reporter.log_event(
+                    reporter.log_event(
                         f"ATP produced in this iteration: {net_atp_produced}"
                     )
-                    self.reporter.log_event(
+                    reporter.log_event(
                         f"Total ATP produced so far: {total_atp_produced}"
                     )
 
-                    self.reporter.log_atp_production("Glycolysis", net_atp_produced)
+                    reporter.log_atp_production("Glycolysis", net_atp_produced)
 
                     # Check if there is enough glucose
                     if self.cell.metabolites["glucose"].quantity <= 0:
-                        self.reporter.log_warning(
-                            "Glucose depleted. Stopping simulation."
-                        )
+                        reporter.log_warning("Glucose depleted. Stopping simulation.")
                         break
 
                     # Check and handle ADP availability
@@ -292,7 +214,7 @@ class SimulationController:
                         2,
                     )
 
-                    self.reporter.log_atp_production(
+                    reporter.log_atp_production(
                         "Cellular Respiration", mitochondrial_atp_produced
                     )
 
@@ -312,9 +234,7 @@ class SimulationController:
                             next_log_time + 10, 2
                         )  # Schedule next log time
 
-                    self.reporter.log_event(
-                        f"Simulation time: {self.simulation_time:.3f}"
-                    )
+                    reporter.log_event(f"Simulation time: {self.simulation_time:.3f}")
 
                     self._check_adenine_nucleotide_balance()
                     self._check_energy_conservation()
@@ -326,33 +246,33 @@ class SimulationController:
                     for metabolite in ["ATP", "ADP", "AMP"]:
                         if self.cell.cytoplasm.metabolites[metabolite].quantity < 0:
                             self.cell.cytoplasm.metabolites[metabolite].quantity = 0
-                            self.reporter.log_warning(
+                            reporter.log_warning(
                                 f"Set {metabolite} to 0 to avoid negative quantity"
                             )
 
                     # Run observers
                     #! Need to think through if this works as expected
                     for observer in self.observers:
-                        observer.observe(self.cell, self.reporter)
+                        observer.observe(self.cell, reporter)
 
                 except UnknownMetaboliteError as e:
-                    self.reporter.log_error(f"Unknown metabolite error: {str(e)}")
-                    self.reporter.log_warning("Skipping current simulation step.")
+                    reporter.log_error(f"Unknown metabolite error: {str(e)}")
+                    reporter.log_warning("Skipping current simulation step.")
                     continue
                 except InsufficientMetaboliteError as e:
-                    self.reporter.log_error(f"Insufficient metabolite error: {str(e)}")
-                    self.reporter.log_warning(
+                    reporter.log_error(f"Insufficient metabolite error: {str(e)}")
+                    reporter.log_warning(
                         "Attempting to continue simulation with available metabolites."
                     )
                     continue
                 except QuantityError as e:
-                    self.reporter.log_error(f"Quantity error: {str(e)}")
-                    self.reporter.log_warning(
+                    reporter.log_error(f"Quantity error: {str(e)}")
+                    reporter.log_warning(
                         "Adjusting quantities and continuing simulation."
                     )
                     continue
                 except GlycolysisError as e:
-                    self.reporter.log_warning(f"Glycolysis error: {str(e)}")
+                    reporter.log_warning(f"Glycolysis error: {str(e)}")
                     break
 
             # After the simulation loop, update the results dictionary
@@ -410,23 +330,21 @@ class SimulationController:
                 results["total_atp_produced"] >= 0
             ), f"Negative ATP production: {results['total_atp_produced']}"
 
-            self.reporter.report_simulation_results(results)
+            reporter.report_simulation_results(results)
 
             # Check adenine nucleotide balance
-            self.reporter.log_event(
+            reporter.log_event(
                 f"Initial total adenine nucleotides: {initial_total_adenine}"
             )
-            self.reporter.log_event(
+            reporter.log_event(
                 f"Final total adenine nucleotides: {final_total_adenine}"
             )
-            self.reporter.log_event(
+            reporter.log_event(
                 f"Difference: {final_total_adenine - initial_total_adenine}"
             )
 
             if abs(final_total_adenine - initial_total_adenine) > 1e-6:
-                self.reporter.log_warning(
-                    "Adenine nucleotide balance is not conserved!"
-                )
+                reporter.log_warning("Adenine nucleotide balance is not conserved!")
                 # Adjust ATP and ADP to maintain balance
                 excess = final_total_adenine - initial_total_adenine
                 atp_adjustment = min(excess, final_atp - self.initial_atp)
@@ -438,7 +356,7 @@ class SimulationController:
                     self.cell.cytoplasm.metabolites["ADP"].quantity += abs(
                         adp_adjustment
                     )
-                self.reporter.log_event(
+                reporter.log_event(
                     f"Adjusted ATP by -{atp_adjustment} and ADP by {-adp_adjustment} to maintain adenine nucleotide balance"
                 )
                 results["final_cytoplasm_atp"] = self.cell.cytoplasm.metabolites[
@@ -452,7 +370,7 @@ class SimulationController:
             results["final_adenine_nucleotides"] = final_adenine_nucleotides
 
             if abs(final_adenine_nucleotides - self.initial_adenine_nucleotides) > 1e-6:
-                self.reporter.log_warning(
+                reporter.log_warning(
                     f"Adenine nucleotide imbalance detected. "
                     f"Initial: {self.initial_adenine_nucleotides:.6f}, "
                     f"Final: {final_adenine_nucleotides:.6f}, "
@@ -462,15 +380,15 @@ class SimulationController:
             return results
 
         except Exception as e:
-            self.reporter.log_error(f"Simulation error: {str(e)}")
+            reporter.log_error(f"Simulation error: {str(e)}")
             raise
 
-    def _handle_adp_availability(self) -> None:
+    def _handle_adp_availability(self, reporter: Reporter) -> None:
         """
         Handle the availability of ADP in the mitochondrion.
         """
         if self.cell.mitochondrion.metabolites["adp"].quantity < 10:
-            self.reporter.log_warning(
+            reporter.log_warning(
                 "Low ADP levels in mitochondrion. Transferring ADP from cytoplasm."
             )
             adp_transfer = min(50, self.cell.metabolites["adp"].quantity)
@@ -536,27 +454,23 @@ class SimulationController:
             self.cell.metabolites["nadh"].quantity, self.max_cytoplasmic_nadh
         )
 
-    def _log_intermediate_state(self) -> None:
+    def _log_intermediate_state(self, reporter: Reporter) -> None:
         """
         Log the intermediate state of the simulation.
         """
         state = self.get_current_state()
-        self.reporter.log_event(f"Time: {state['simulation_time']:.2f} s")
+        reporter.log_event(f"Time: {state['simulation_time']:.2f} s")
         if "glucose_processed" in state:
-            self.reporter.log_event(
-                f"Glucose Processed: {state['glucose_processed']:.2f}"
-            )
+            reporter.log_event(f"Glucose Processed: {state['glucose_processed']:.2f}")
         else:
-            self.reporter.log_event("Glucose Processed: Not available")
-        self.reporter.log_event(
-            f"Total ATP Produced: {state['total_atp_produced']:.2f}"
-        )
-        self.reporter.log_event(f"Cytoplasm ATP: {state['cytoplasm_atp']:.2f}")
-        self.reporter.log_event(f"Mitochondrion ATP: {state['mitochondrion_atp']:.2f}")
-        self.reporter.log_event(f"Proton Gradient: {state['proton_gradient']:.2f}")
-        self.reporter.log_event(f"Oxygen Remaining: {state['oxygen_remaining']:.2f}")
-        self.reporter.log_event(f"NAD+: {state['nad']:.2f}")
-        self.reporter.log_event(f"NADH: {state['nadh']:.2f}")
+            reporter.log_event("Glucose Processed: Not available")
+        reporter.log_event(f"Total ATP Produced: {state['total_atp_produced']:.2f}")
+        reporter.log_event(f"Cytoplasm ATP: {state['cytoplasm_atp']:.2f}")
+        reporter.log_event(f"Mitochondrion ATP: {state['mitochondrion_atp']:.2f}")
+        reporter.log_event(f"Proton Gradient: {state['proton_gradient']:.2f}")
+        reporter.log_event(f"Oxygen Remaining: {state['oxygen_remaining']:.2f}")
+        reporter.log_event(f"NAD+: {state['nad']:.2f}")
+        reporter.log_event(f"NADH: {state['nadh']:.2f}")
 
     def get_current_state(self) -> dict:
         """
@@ -588,14 +502,14 @@ class SimulationController:
         self.cell.cytoplasm.metabolites["ADP"].quantity = 1.0
         self.cell.cytoplasm.metabolites["AMP"].quantity = 1.0
 
-    def _check_adenine_nucleotide_balance(self) -> None:
+    def _check_adenine_nucleotide_balance(self, reporter: Reporter) -> None:
         """
         Check the adenine nucleotide balance and log any changes.
         """
         current_adenine_nucleotides = self._calculate_total_adenine_nucleotides()
         difference = current_adenine_nucleotides - self.initial_adenine_nucleotides
         if abs(difference) > 1e-6:
-            self.reporter.log_warning(
+            reporter.log_warning(
                 f"Adenine nucleotide imbalance detected. "
                 f"Current: {current_adenine_nucleotides:.6f}, "
                 f"Initial: {self.initial_adenine_nucleotides:.6f}, "
@@ -605,20 +519,20 @@ class SimulationController:
                 ("Imbalance", current_adenine_nucleotides)
             )
 
-    def _report_adenine_nucleotide_changes(self) -> None:
+    def _report_adenine_nucleotide_changes(self, reporter: Reporter) -> None:
         """
         Report the changes in adenine nucleotides throughout the simulation.
         """
-        self.reporter.log_event("\nAdenine Nucleotide Changes:")
+        reporter.log_event("\nAdenine Nucleotide Changes:")
         for stage, value in self.adenine_nucleotide_log:
-            self.reporter.log_event(f"{stage}: {value:.6f}")
+            reporter.log_event(f"{stage}: {value:.6f}")
 
         initial = self.adenine_nucleotide_log[0][1]
         final = self.adenine_nucleotide_log[-1][1]
         difference = final - initial
-        self.reporter.log_event(f"Total Change: {difference:.6f}")
+        reporter.log_event(f"Total Change: {difference:.6f}")
 
-    def _check_energy_conservation(self) -> None:
+    def _check_energy_conservation(self, reporter: Reporter) -> None:
         """
         Check the energy conservation and log any changes.
 
@@ -629,14 +543,14 @@ class SimulationController:
         current_energy_state = self._calculate_total_energy_state()
         difference = current_energy_state - self.initial_energy_state
         if abs(difference) > 1e-6:
-            self.reporter.log_warning(
+            reporter.log_warning(
                 f"Energy conservation violation detected. "
                 f"Current: {current_energy_state:.6f}, "
                 f"Initial: {self.initial_energy_state:.6f}, "
                 f"Difference: {difference:.6f}"
             )
 
-    def _check_and_adjust_adenine_balance(self):
+    def _check_and_adjust_adenine_balance(self, reporter: Reporter):
         """
         Check the adenine nucleotide balance and make adjustments if necessary.
 
@@ -663,6 +577,6 @@ class SimulationController:
             amp_adjustment = remaining_adjustment - adp_adjustment
             self.cell.cytoplasm.metabolites["AMP"].quantity += amp_adjustment
 
-            self.reporter.log_warning(
+            reporter.log_warning(
                 f"Adjusted ATP by -{atp_adjustment}, ADP by -{adp_adjustment}, and AMP by +{amp_adjustment} to maintain adenine nucleotide balance"
             )

@@ -10,8 +10,6 @@ from .energy_calculations import (
 from .exceptions import GlycolysisError, ReactionError
 from .pathway import Pathway
 
-logger = logging.getLogger(__name__)
-
 if TYPE_CHECKING:
     from .organelle import Organelle
 
@@ -22,12 +20,14 @@ class Glycolysis(Pathway):
     """
 
     time_step = 0.1  # Default time step in seconds
-
     reactions = GlycolysisReactions
+
+    def __init__(self, debug=False):
+        self.debug = debug
 
     @classmethod
     def perform(
-        cls, organelle: "Organelle", glucose_units: float
+        cls, organelle: "Organelle", glucose_units: float, logger: logging.Logger
     ) -> tuple[float, float]:
         """
         Perform glycolysis on the given number of glucose units.
@@ -58,8 +58,8 @@ class Glycolysis(Pathway):
         if glucose_units <= 0:
             raise GlycolysisError("The number of glucose units must be positive.")
 
-        initial_energy = cls._calculate_energy_state(organelle)
-        initial_adenine = cls._calculate_total_adenine_nucleotides(organelle)
+        initial_energy = cls._calculate_energy_state(organelle, logger)
+        initial_adenine = cls._calculate_total_adenine_nucleotides(organelle, logger)
 
         try:
             initial_atp = organelle.get_metabolite_quantity("ATP")
@@ -71,7 +71,7 @@ class Glycolysis(Pathway):
             )
 
             # Investment phase
-            cls.investment_phase(organelle, glucose_units)
+            cls.investment_phase(organelle, glucose_units, logger)
 
             atp_after_investment = organelle.get_metabolite_quantity("ATP")
             logger.info(f"ATP after investment phase: {atp_after_investment}")
@@ -80,10 +80,10 @@ class Glycolysis(Pathway):
             )
 
             # Yield phase
-            cls.yield_phase(organelle, glucose_units * 2)  # 2 G3P per glucose
+            cls.yield_phase(organelle, glucose_units * 2, logger)  # 2 G3P per glucose
 
             # Add NAD+ regeneration step
-            cls.regenerate_nad(organelle)
+            cls.regenerate_nad(organelle, logger)
 
             final_atp = organelle.get_metabolite_quantity("ATP")
             final_adp = organelle.get_metabolite_quantity("ADP")
@@ -99,7 +99,12 @@ class Glycolysis(Pathway):
                     f"Adenine nucleotide imbalance detected. Initial: {initial_total}, Final: {final_total}"
                 )
                 cls.adjust_adenine_nucleotides(
-                    organelle, initial_total, final_total, initial_atp, final_atp
+                    organelle,
+                    initial_total,
+                    final_total,
+                    initial_atp,
+                    final_atp,
+                    logger,
                 )
 
             # Recalculate net ATP produced after adjustments
@@ -113,8 +118,8 @@ class Glycolysis(Pathway):
             logger.info(f"Glycolysis completed. Produced {pyruvate_produced} pyruvate.")
             logger.info(f"Final metabolite levels: {organelle.metabolites.quantities}")
 
-            final_energy = cls._calculate_energy_state(organelle)
-            final_adenine = cls._calculate_total_adenine_nucleotides(organelle)
+            final_energy = cls._calculate_energy_state(organelle, logger)
+            final_adenine = cls._calculate_total_adenine_nucleotides(organelle, logger)
 
             # Check energy conservation
             energy_difference = final_energy - initial_energy
@@ -144,6 +149,7 @@ class Glycolysis(Pathway):
         final_total: float,
         initial_atp: float,
         final_atp: float,
+        logger: logging.Logger,
     ) -> None:
         """
         Adjust the adenine nucleotides to maintain balance.
@@ -160,6 +166,8 @@ class Glycolysis(Pathway):
             The initial amount of ATP.
         final_atp : float
             The final amount of ATP.
+        logger : logging.Logger
+            The logger to use for logging.
         """
         excess = final_total - initial_total
         if abs(excess) > 1e-6:
@@ -175,7 +183,13 @@ class Glycolysis(Pathway):
             )
 
     @classmethod
-    def investment_phase(cls, organelle, glucose_units):
+    def execute(
+        cls, organelle: "Organelle", glucose_units: float, logger: logging.Logger
+    ):
+        cls.perform(organelle, glucose_units, logger)
+
+    @classmethod
+    def investment_phase(cls, organelle, glucose_units, logger: logging.Logger):
         """
         Perform the investment phase of glycolysis (steps 1-5) for multiple glucose units.
         """
@@ -207,7 +221,7 @@ class Glycolysis(Pathway):
         logger.info(f"ATP consumed in investment phase: {initial_atp - final_atp}")
 
     @classmethod
-    def yield_phase(cls, organelle, g3p_units):
+    def yield_phase(cls, organelle, g3p_units, logger: logging.Logger):
         """
         Perform the yield phase of glycolysis (steps 6-10) for multiple G3P units.
         """
@@ -237,7 +251,7 @@ class Glycolysis(Pathway):
         logger.info(f"ATP produced in yield phase: {final_atp - initial_atp}")
 
     @classmethod
-    def enolase_reaction(cls, organelle: "Organelle"):
+    def enolase_reaction(cls, organelle: "Organelle", logger: logging.Logger):
         #! IS THIS USED
         initial_atp = organelle.get_metabolite_quantity("ATP")
         enolase = GlycolysisReactions.enolase
@@ -256,21 +270,21 @@ class Glycolysis(Pathway):
         )
 
     @classmethod
-    def phosphoglycerate_kinase(cls, organelle):
+    def phosphoglycerate_kinase(cls, organelle, logger: logging.Logger):
         #! IS THIS USED
         """1,3-Bisphosphoglycerate to 3-Phosphoglycerate"""
         reaction = cls.reactions.phosphoglycerate_kinase
         reaction.execute(organelle)
 
     @classmethod
-    def pyruvate_kinase(cls, organelle):
+    def pyruvate_kinase(cls, organelle, logger: logging.Logger):
         #! IS THIS USED
         """Phosphoenolpyruvate to Pyruvate"""
         reaction = cls.reactions.pyruvate_kinase
         reaction.execute(organelle)
 
     @classmethod
-    def regenerate_nad(cls, organelle):
+    def regenerate_nad(cls, organelle, logger: logging.Logger):
         """Regenerate NAD+ via Lactate Dehydrogenase reaction"""
         nadh_quantity = organelle.get_metabolite_quantity("NADH")
         pyruvate_quantity = organelle.get_metabolite_quantity("pyruvate")
@@ -281,10 +295,13 @@ class Glycolysis(Pathway):
             cls.reactions.lactate_dehydrogenase.execute(organelle)
             logger.info(f"Regenerated {reaction_amount} NAD+ via Lactate Dehydrogenase")
 
-    @staticmethod
-    def _calculate_energy_state(organelle: "Organelle") -> float:
-        return calculate_glycolysis_energy_state(organelle)
+    @classmethod
+    def _calculate_energy_state(cls, organelle, logger):
+        # Update the method implementation to use both organelle and logger
+        pass
 
     @staticmethod
-    def _calculate_total_adenine_nucleotides(organelle: "Organelle") -> float:
+    def _calculate_total_adenine_nucleotides(
+        organelle: "Organelle", logger: logging.Logger
+    ) -> float:
         return calculate_total_adenine_nucleotides(organelle.metabolites)

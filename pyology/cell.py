@@ -5,16 +5,14 @@ from .cytoplasm import Cytoplasm
 from .mitochondrion import KrebsCycle, Mitochondrion
 from .organelle import Organelle
 
-logger = logging.getLogger(__name__)
-
 
 class Cell(Organelle):
     name = "Cell"
 
-    def __init__(self):
+    def __init__(self, logger=None, debug=False):
         super().__init__()
         self.atp = 300  # Initial ATP value
-        self.cytoplasm = Cytoplasm()
+        self.cytoplasm = Cytoplasm(logger=logger, debug=debug)
         self.mitochondrion = Mitochondrion()
         self.krebs_cycle = KrebsCycle()
         self.simulation_time = 0
@@ -22,8 +20,11 @@ class Cell(Organelle):
         self.base_glycolysis_rate = 1.0  # This is now in the Cell class
         self.glycolysis_rate = self.base_glycolysis_rate  # Initialize glycolysis_rate
         self.initial_adenine_nucleotides = None
+        self.debug = debug
+        self.logger = logger
 
     def produce_atp(self, glucose, simulation_duration=SIMULATION_DURATION):
+        #! Not being used, may not need
         """Simulates ATP production in the entire cell over a specified duration."""
         self.simulation_time = 0
         total_atp_produced = 0
@@ -33,7 +34,7 @@ class Cell(Organelle):
             glucose_processed < glucose and self.simulation_time < simulation_duration
         ):
             if self.metabolites["oxygen"].quantity <= 0:
-                logger.warning("Oxygen depleted. Stopping simulation.")
+                self.logger.warning("Oxygen depleted. Stopping simulation.")
                 break
 
             # Calculate ATP at the start of the iteration
@@ -43,7 +44,7 @@ class Cell(Organelle):
 
             # Check ADP availability
             if self.metabolites["adp"].quantity < 10:  # Arbitrary threshold
-                logger.warning(
+                self.logger.warning(
                     "Low ADP levels in mitochondrion. Transferring ADP from cytoplasm."
                 )
                 adp_transfer = min(
@@ -62,11 +63,11 @@ class Cell(Organelle):
             glucose_consumed = min(
                 1 * self.glycolysis_rate, self.metabolites["glucose"].quantity
             )
-            pyruvate = self.cytoplasm.glycolysis(glucose_consumed)
+            pyruvate = self.glycolysis.perform_glycolysis(glucose_consumed)
             self.metabolites.add(
                 "pyruvate", pyruvate, max_quantity=1000
             )  # Updated: added max_quantity
-            logger.info(f"Transferred {pyruvate} pyruvate to mitochondrion")
+            self.logger.info(f"Transferred {pyruvate} pyruvate to mitochondrion")
             glucose_processed += glucose_consumed
 
             cytoplasmic_nadh = self.metabolites["nadh"].quantity
@@ -103,6 +104,7 @@ class Cell(Organelle):
         return total_atp_produced
 
     def produce_atp_generator(self, glucose, simulation_duration=SIMULATION_DURATION):
+        #! Not being used, may not need
         """Generator that yields the cell's state after each time step."""
         self.simulation_time = 0
         total_atp_produced = 0
@@ -112,7 +114,7 @@ class Cell(Organelle):
             glucose_processed < glucose and self.simulation_time < simulation_duration
         ):
             if self.metabolites["oxygen"].quantity <= 0:
-                logger.warning("Oxygen depleted. Stopping simulation.")
+                self.logger.warning("Oxygen depleted. Stopping simulation.")
                 break
 
             # Calculate ATP at the start of the iteration
@@ -122,7 +124,7 @@ class Cell(Organelle):
 
             # Check ADP availability and transfer if needed
             if self.metabolites["adp"].quantity < 10:
-                logger.warning(
+                self.logger.warning(
                     "Low ADP levels in mitochondrion. Transferring ADP from cytoplasm."
                 )
                 adp_transfer = min(
@@ -139,7 +141,7 @@ class Cell(Organelle):
             glucose_consumed = min(
                 1 * self.glycolysis_rate, self.metabolites["glucose"].quantity
             )
-            pyruvate = self.cytoplasm.glycolysis(glucose_consumed)
+            pyruvate = self.glycolysis.perform_glycolysis(glucose_consumed)
             glucose_processed += glucose_consumed
 
             cytoplasmic_nadh = self.metabolites["nadh"].quantity
@@ -196,11 +198,7 @@ class Cell(Organelle):
         self.atp = 300  # Reset ATP to initial value
         self.metabolites.reset()
         self.simulation_time = 0
-        logger.info("Cell state reset")
-
-    def process(self, time_step):
-        # Implement the simulation logic here
-        pass
+        self.logger.info("Cell state reset")
 
     def check_adenine_nucleotide_balance(self):
         """Check if the total adenine nucleotides have changed."""
@@ -210,7 +208,7 @@ class Cell(Organelle):
             + self.metabolites["AMP"].quantity
         )
         if abs(current_total - self.initial_adenine_nucleotides) > 1e-6:
-            logger.warning(
+            self.logger.warning(
                 f"Adenine nucleotide imbalance detected. "
                 f"Initial: {self.initial_adenine_nucleotides}, "
                 f"Current: {current_total}"
@@ -224,6 +222,6 @@ class Cell(Organelle):
             + self.metabolites["ADP"].quantity
             + self.metabolites["AMP"].quantity
         )
-        logger.info(
+        self.logger.info(
             f"Initial total adenine nucleotides: {self.initial_adenine_nucleotides}"
         )

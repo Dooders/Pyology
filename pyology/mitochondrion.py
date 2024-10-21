@@ -2,6 +2,9 @@ import logging
 import math
 from typing import Dict
 
+from utils.command_data import CommandData
+from utils.tracking import execute_command
+
 from .constants import *
 from .exceptions import *
 from .krebs_cycle import KrebsCycle
@@ -54,8 +57,9 @@ class Mitochondrion(Organelle):
 
     name = "Mitochondrion"
 
-    def __init__(self) -> None:
+    def __init__(self, debug=False) -> None:
         super().__init__()
+        self.debug = debug
 
         self.proton_gradient = 0
         self.atp_per_nadh = 2.5
@@ -268,109 +272,41 @@ class Mitochondrion(Organelle):
         """
         return pyruvate_amount * 2.5
 
-    def cellular_respiration(self, pyruvate_amount: int) -> int:
+    def cellular_respiration(self, pyruvate_amount: float) -> float:
         """
-        Simulates the entire cellular respiration process with feedback inhibition.
+        Perform cellular respiration on the given amount of pyruvate.
 
-        Parameters
-        ----------
-        pyruvate_amount: int
-            The amount of pyruvate to convert.
+        Args:
+            pyruvate_amount: The amount of pyruvate to process.
 
-        Returns
-        -------
-        int
+        Returns:
             The amount of ATP produced.
         """
-        logger.info(f"Starting cellular respiration with {pyruvate_amount} pyruvate")
-        if self.metabolites["oxygen"].quantity <= 0:
-            logger.warning("No oxygen available. Cellular respiration halted.")
-            return 0
+        tracked_attributes = [
+            "pyruvate",
+            "atp",
+            "adp",
+            "nad",
+            "nadh",
+            "fadh2",
+            "oxygen",
+        ]
 
-        initial_atp = self.metabolites["ATP"].quantity
-        initial_adp = self.metabolites["ADP"].quantity
-        initial_amp = self.metabolites["AMP"].quantity
-        initial_total_adenine = initial_atp + initial_adp + initial_amp
+        def validate_conservation(obj, initial, final, changes):
+            # Add appropriate validation logic here
+            return True
 
-        acetyl_coa = self.pyruvate_to_acetyl_coa(pyruvate_amount)
-        self.krebs_cycle.add_substrate("glucose", acetyl_coa)
-
-        # Implement feedback inhibition
-        atp_inhibition_factor = 1 / (
-            1 + self.metabolites["atp"].quantity / 1000
-        )  # Example threshold
-        self.krebs_cycle.enzymes["citrate_synthase"].activity *= atp_inhibition_factor
-        self.krebs_cycle.enzymes[
-            "isocitrate_dehydrogenase"
-        ].activity *= atp_inhibition_factor
-
-        # Ensure all necessary metabolites exist before starting the Krebs cycle
-        self.initialize_krebs_cycle_metabolites()
-
-        # Use the new generator-based method for the Krebs cycle
-        for reaction_name, result in self.krebs_cycle.reaction_iterator():
-            logger.info(f"Completed Krebs cycle step: {reaction_name}")
-            if result is False:
-                logger.warning(
-                    f"Krebs cycle step {reaction_name} failed due to insufficient substrates"
-                )
-                break
-
-            # After each reaction, check the state of metabolites
-            logger.info("Current metabolite state in Krebs cycle:")
-            for metabolite, quantity in self.krebs_cycle.metabolite_iterator():
-                logger.info(f"  {metabolite}: {quantity:.2f}")
-
-        # Transfer NADH and FADH2 from Krebs cycle to ETC
-        self.change_metabolite_quantity("nadh", self.krebs_cycle.cofactors["NADH"])
-        self.change_metabolite_quantity("fadh2", self.krebs_cycle.cofactors["FADH2"])
-
-        # Check ADP availability
-        if self.metabolites["adp"].quantity < 10:  # Arbitrary threshold
-            logger.warning("Low ADP levels. Oxidative phosphorylation may be limited.")
-
-        # Example of updating a method that uses consume_metabolites
-        oxygen_needed = self.calculate_oxygen_needed(pyruvate_amount)
-        if self.consume_metabolites(oxygen=oxygen_needed):
-            # proceed with respiration
-            atp_produced = self.oxidative_phosphorylation()
-        else:
-            logger.warning("Insufficient oxygen for cellular respiration")
-            return 0
-
-        # Add ATP from substrate-level phosphorylation in Krebs cycle
-        atp_produced += self.krebs_cycle.cofactors["GTP"]  # GTP is equivalent to ATP
-
-        # Ensure ADP is consumed when ATP is produced
-        if self.metabolites["ADP"].quantity >= atp_produced:
-            self.metabolites["ADP"].quantity -= atp_produced
-            self.metabolites["ATP"].quantity += atp_produced
-        else:
-            # If not enough ADP, convert AMP to ADP
-            adp_needed = atp_produced - self.metabolites["ADP"].quantity
-            if self.metabolites["AMP"].quantity >= adp_needed:
-                self.metabolites["AMP"].quantity -= adp_needed
-                self.metabolites["ADP"].quantity += adp_needed
-                self.metabolites["ADP"].quantity -= atp_produced
-                self.metabolites["ATP"].quantity += atp_produced
-            else:
-                raise InsufficientMetaboliteError(
-                    "Not enough ADP or AMP for ATP production in cellular respiration"
-                )
-
-        final_atp = self.metabolites["ATP"].quantity
-        final_adp = self.metabolites["ADP"].quantity
-        final_amp = self.metabolites["AMP"].quantity
-        final_total_adenine = final_atp + final_adp + final_amp
-
-        assert abs(final_total_adenine - initial_total_adenine) < 1e-6, (
-            f"Adenine nucleotide conservation violated in cellular respiration. "
-            f"Initial: {initial_total_adenine:.6f}, Final: {final_total_adenine:.6f}, "
-            f"Difference: {final_total_adenine - initial_total_adenine:.6f}"
+        command_data = CommandData(
+            obj=self,
+            command="process_pyruvate",
+            tracked_attributes=tracked_attributes,
+            args=[pyruvate_amount],
+            validations=[validate_conservation],
         )
 
-        logger.info(f"Cellular respiration completed. ATP produced: {atp_produced}")
-        return atp_produced
+        result = execute_command(command_data, logger, self.debug)
+
+        return result["result"]  # This should be the amount of ATP produced
 
     def calculate_proton_leak(self) -> float:
         """
@@ -729,4 +665,3 @@ class Mitochondrion(Organelle):
             f"Transferred {cytoplasmic_nadh} cytoplasmic NADH, produced {mitochondrial_nadh} mitochondrial NADH"
         )
         return mitochondrial_nadh
-

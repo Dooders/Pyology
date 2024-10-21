@@ -8,8 +8,8 @@ logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
 )
 
-cell = Cell()
 reporter = Reporter()
+cell = Cell(logger=reporter)
 sim_controller = SimulationController(cell, reporter)
 glucose_amounts = [4]
 
@@ -36,7 +36,8 @@ for glucose in glucose_amounts:
     reporter.log_event(f"ADP: {initial_adp:.2f}")
     reporter.log_event(f"AMP: {initial_amp:.2f}")
 
-    results = sim_controller.run_simulation(glucose)
+    # Pass the reporter to the run_simulation method
+    results = sim_controller.run_simulation(glucose, reporter)
 
     reporter.log_event("\nAdenine Nucleotide Balance:")
     reporter.log_event(

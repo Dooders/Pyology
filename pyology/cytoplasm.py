@@ -1,6 +1,12 @@
+import logging
+
+from utils.command_data import CommandData
+from utils.tracking import execute_command
+
 from .glycolysis import Glycolysis
 from .organelle import Organelle
-from .exceptions import InsufficientMetaboliteError
+
+logger = logging.getLogger(__name__)
 
 
 class Cytoplasm(Organelle):
@@ -22,62 +28,40 @@ class Cytoplasm(Organelle):
 
     name = "Cytoplasm"
 
-    def __init__(self):
+    def __init__(self, logger=None, debug=False):
         super().__init__()
+        self.debug = debug
+        self.logger = logger or logging.getLogger(__name__)
 
-    def glycolysis(self, glucose_consumed: float) -> float:
+    def glycolysis(self, glucose_amount: float) -> float:
+        #! Not being used, may not need. SHould this me here or somewhere else
         """
-        Perform glycolysis on the specified amount of glucose.
+        Perform glycolysis on the given amount of glucose.
 
-        Parameters
-        ----------
-        glucose_consumed : float
-            The amount of glucose to consume.
+        Args:
+            glucose_amount: The amount of glucose to process.
 
-        Returns
-        -------
-        float
+        Returns:
             The amount of pyruvate produced.
         """
-        initial_atp = self.metabolites["ATP"].quantity
-        initial_adp = self.metabolites["ADP"].quantity
-        initial_amp = self.metabolites["AMP"].quantity
-        initial_total_adenine = initial_atp + initial_adp + initial_amp
+        tracked_attributes = ["glucose", "atp", "adp", "nad", "nadh", "pyruvate"]
 
-        # Perform glycolysis
-        pyruvate_produced = Glycolysis.perform(self, glucose_consumed)
+        def validate_conservation(obj, initial, final, changes):
+            initial_adenine = initial["atp"] + initial["adp"]
+            final_adenine = final["atp"] + final["adp"]
+            return abs(final_adenine - initial_adenine) < 1e-6
 
-        # Calculate net ATP produced
-        final_atp = self.metabolites["ATP"].quantity
-        net_atp_produced = final_atp - initial_atp
-
-        # Ensure ADP is consumed when ATP is produced
-        if self.metabolites["ADP"].quantity >= net_atp_produced:
-            self.metabolites["ADP"].quantity -= net_atp_produced
-        else:
-            # If not enough ADP, convert AMP to ADP
-            adp_needed = net_atp_produced - self.metabolites["ADP"].quantity
-            if self.metabolites["AMP"].quantity >= adp_needed / 2:
-                self.metabolites["AMP"].quantity -= adp_needed / 2
-                self.metabolites["ADP"].quantity += adp_needed
-                self.metabolites["ADP"].quantity -= net_atp_produced
-            else:
-                raise InsufficientMetaboliteError(
-                    "Not enough ADP or AMP for ATP production in glycolysis"
-                )
-
-        final_atp = self.metabolites["ATP"].quantity
-        final_adp = self.metabolites["ADP"].quantity
-        final_amp = self.metabolites["AMP"].quantity
-        final_total_adenine = final_atp + final_adp + final_amp
-
-        assert abs(final_total_adenine - initial_total_adenine) < 1e-6, (
-            f"Adenine nucleotide conservation violated in glycolysis. "
-            f"Initial: {initial_total_adenine:.6f}, Final: {final_total_adenine:.6f}, "
-            f"Difference: {final_total_adenine - initial_total_adenine:.6f}"
+        command_data = CommandData(
+            obj=self,
+            command=Glycolysis.perform,
+            tracked_attributes=tracked_attributes,
+            args=[glucose_amount],
+            validations=[validate_conservation],
         )
 
-        return pyruvate_produced
+        result = execute_command(command_data, self.logger, self.debug)
+
+        return result["result"]  # This should be the amount of pyruvate produced
 
     def reset(self) -> None:
         self.__init__()
